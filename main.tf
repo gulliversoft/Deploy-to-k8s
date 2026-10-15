@@ -1,6 +1,8 @@
 
 
 terraform {
+  required_version = ">= 1.9.0"
+
   required_providers {
     artifactory = {
       source  = "jfrog/artifactory"
@@ -14,6 +16,9 @@ terraform {
     }
     helm = {
       source = "hashicorp/helm"
+    }
+    platform = {
+      source = "jfrog/platform"
     }
   }
 }
@@ -527,4 +532,52 @@ resource "kubernetes_service_v1" "example" {
     }
     type = "NodePort"
   }
+}
+############################
+# MAVEN REPOS + OIDC (module)
+############################
+
+variable "jfrog_url" {
+  type    = string
+  default = "http://192.168.49.2:30080"
+}
+
+variable "enable_jfrog_provider" {
+  description = "Enable Terraform management of Artifactory resources (requires Pro and an admin token)"
+  type        = bool
+  default     = false
+}
+
+variable "jfrog_admin_token" {
+  type      = string
+  sensitive = true
+  default   = null
+
+  validation {
+    condition = !var.enable_jfrog_provider || (
+      var.jfrog_admin_token != null && trimspace(var.jfrog_admin_token) != ""
+    )
+    error_message = "enable_jfrog_provider is true, but TF_VAR_jfrog_admin_token is not set or is empty. Set an Artifactory admin access token, or disable the JFrog provider."
+  }
+}
+
+provider "artifactory" {
+  url          = "${var.jfrog_url}/artifactory"
+  access_token = var.jfrog_admin_token
+}
+
+provider "platform" {
+  url          = var.jfrog_url
+  access_token = var.jfrog_admin_token
+}
+
+module "maven_oidc" {
+  count  = var.enable_jfrog_provider ? 1 : 0
+  source = "./modules/artifactory-maven-oidc"
+
+  # Issuer must be reachable by Artifactory and match the token's "iss" claim
+  oidc_issuer_url = "https://keycloak.example.com/realms/demo"
+  enable_oidc     = false
+  deploy_keycloak = false
+  depends_on      = [helm_release.artifactory]
 }
